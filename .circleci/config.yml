@@ -1,3 +1,100 @@
+# version: 2.1
+
+# executors:
+#   docker-executor:
+#     docker:
+#       - image: google/cloud-sdk:latest
+#     working_directory: ~/repo
+
+# jobs:
+#   checkout_code:
+#     executor: docker-executor
+#     steps:
+#       - checkout
+  
+#   build_docker_image:
+#     executor: docker-executor
+#     steps:
+#       - checkout
+#       - setup_remote_docker
+#       - run:
+#           name: Authenticate with Google Cloud (OIDC)
+#           command: |
+#             # Ensure OIDC token exists
+#             test -n "$CIRCLE_OIDC_TOKEN_V2" && echo "OIDC token found" || (echo "OIDC token missing!" && exit 1)
+            
+#             # Save OIDC token to file
+#             echo "$CIRCLE_OIDC_TOKEN_V2" > /tmp/oidc-token
+            
+#             # Create workload identity credential config
+#             gcloud iam workload-identity-pools create-cred-config \
+#               "projects/383274227926/locations/global/workloadIdentityPools/circleci-pool/providers/circleci-provider" \
+#               --service-account="my-ci-sa@project-43fb5c97-55ce-44f7-b35.iam.gserviceaccount.com" \
+#               --credential-source-file="/tmp/oidc-token" \
+#               --output-file="/tmp/gcp-external.json"
+            
+#             # Export credentials
+#             export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-external.json
+            
+#             # Get access token and authenticate Docker
+#             ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
+#             echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev
+      
+#       - run:
+#           name: Build and Push Image
+#           command: |
+#             docker build -t us-central1-docker.pkg.dev/$GOOGLE_PROJECT_ID/llmops-repo/llmops-app:latest .
+#             docker push us-central1-docker.pkg.dev/$GOOGLE_PROJECT_ID/llmops-repo/llmops-app:latest
+  
+#   deploy_to_gke:
+#     executor: docker-executor
+#     steps:
+#       - checkout
+#       - setup_remote_docker
+#       - run:
+#           name: Authenticate with Google Cloud (OIDC)
+#           command: |
+#             # Ensure OIDC token exists
+#             test -n "$CIRCLE_OIDC_TOKEN_V2"
+            
+#             # Save OIDC token to file
+#             echo "$CIRCLE_OIDC_TOKEN_V2" > /tmp/oidc-token
+            
+#             # Create workload identity credential config
+#             gcloud iam workload-identity-pools create-cred-config \
+#               "projects/383274227926/locations/global/workloadIdentityPools/circleci-pool/providers/circleci-provider" \
+#               --service-account="my-ci-sa@project-43fb5c97-55ce-44f7-b35.iam.gserviceaccount.com" \
+#               --credential-source-file="/tmp/oidc-token" \
+#               --output-file="/tmp/gcp-external.json"
+            
+#             # Export credentials and authenticate
+#             export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-external.json
+#             gcloud auth login --brief --cred-file=/tmp/gcp-external.json
+      
+#       - run:
+#           name: Configure GKE
+#           command: |
+#             gcloud container clusters get-credentials $GKE_CLUSTER --region $GOOGLE_COMPUTE_REGION --project $GOOGLE_PROJECT_ID
+      
+#       - run:
+#           name: Deploy to GKE
+#           command: |
+#             kubectl apply -f kubernetes-deployment.yaml --validate=false
+#             kubectl rollout restart deployment llmops-app
+
+# workflows:
+#   version: 2
+#   deploy_pipeline:
+#     jobs:
+#       - checkout_code
+#       - build_docker_image:
+#           requires:
+#             - checkout_code
+#       - deploy_to_gke:
+#           requires:
+#             - build_docker_image
+
+
 version: 2.1
 
 executors:
@@ -13,12 +110,23 @@ jobs:
       - checkout
   
   build_docker_image:
-    executor: docker-executor
+    machine:
+      image: ubuntu-2204:current
     steps:
       - checkout
-      - setup_remote_docker
       - run:
-          name: Authenticate with Google Cloud (OIDC)
+          name: Install Google Cloud SDK
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
+            curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
+              sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | \
+              sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+            sudo apt-get update
+            sudo apt-get install -y google-cloud-cli
+      - run:
+          name: Authenticate with Google Cloud (OIDC) and Build/Push
           command: |
             # Ensure OIDC token exists
             test -n "$CIRCLE_OIDC_TOKEN_V2" && echo "OIDC token found" || (echo "OIDC token missing!" && exit 1)
@@ -39,18 +147,27 @@ jobs:
             # Get access token and authenticate Docker
             ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
             echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev
-      
-      - run:
-          name: Build and Push Image
-          command: |
+            
+            # Build and Push Image
             docker build -t us-central1-docker.pkg.dev/$GOOGLE_PROJECT_ID/llmops-repo/llmops-app:latest .
             docker push us-central1-docker.pkg.dev/$GOOGLE_PROJECT_ID/llmops-repo/llmops-app:latest
   
   deploy_to_gke:
-    executor: docker-executor
+    machine:
+      image: ubuntu-2204:current
     steps:
       - checkout
-      - setup_remote_docker
+      - run:
+          name: Install Google Cloud SDK and kubectl
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
+            curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
+              sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | \
+              sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+            sudo apt-get update
+            sudo apt-get install -y google-cloud-cli kubectl
       - run:
           name: Authenticate with Google Cloud (OIDC)
           command: |
