@@ -9,6 +9,10 @@ executors:
 jobs:
   build_and_push:
     executor: gcp-machine
+
+    # 🔑 REQUIRED: enable OIDC for this job
+    oidc: true
+
     steps:
       - checkout
 
@@ -36,6 +40,9 @@ jobs:
       - run:
           name: Authenticate to Google Cloud (OIDC)
           command: |
+            # Fail fast if OIDC token is missing
+            test -n "$CIRCLE_OIDC_TOKEN_V2"
+
             echo "$CIRCLE_OIDC_TOKEN_V2" > /tmp/oidc-token
 
             gcloud iam workload-identity-pools create-cred-config \
@@ -63,6 +70,10 @@ jobs:
 
   deploy_to_gke:
     executor: gcp-machine
+
+    # 🔑 REQUIRED: enable OIDC here too
+    oidc: true
+
     steps:
       - checkout
 
@@ -90,6 +101,8 @@ jobs:
       - run:
           name: Authenticate to Google Cloud (OIDC)
           command: |
+            test -n "$CIRCLE_OIDC_TOKEN_V2"
+
             echo "$CIRCLE_OIDC_TOKEN_V2" > /tmp/oidc-token
 
             gcloud iam workload-identity-pools create-cred-config \
