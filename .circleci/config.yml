@@ -1,17 +1,11 @@
 version: 2.1
-
 jobs:
   build_and_push:
     machine:
       image: ubuntu-2204:current
     working_directory: ~/repo
-
-    # 🔑 REQUIRED for OIDC
-    oidc: true
-
     steps:
       - checkout
-
       # -------------------------------
       # Install Google Cloud SDK + Docker Credential Helper
       # -------------------------------
@@ -20,16 +14,12 @@ jobs:
           command: |
             sudo apt-get update
             sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
-
             curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
               sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-
             echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | \
               sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
-
             sudo apt-get update
             sudo apt-get install -y google-cloud-cli google-cloud-cli-docker-credential-gcr
-
       # -------------------------------
       # Authenticate to GCP using OIDC
       # -------------------------------
@@ -38,20 +28,15 @@ jobs:
           command: |
             # Ensure OIDC token exists
             test -n "$CIRCLE_OIDC_TOKEN_V2"
-
             echo "$CIRCLE_OIDC_TOKEN_V2" > /tmp/oidc-token
-
             gcloud iam workload-identity-pools create-cred-config \
               "projects/383274227926/locations/global/workloadIdentityPools/circleci-pool/providers/circleci-provider" \
               --service-account="my-ci-sa@project-43fb5c97-55ce-44f7-b35.iam.gserviceaccount.com" \
               --credential-source-file="/tmp/oidc-token" \
               --output-file="/tmp/gcp-external.json"
-
             export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-external.json
             export DOCKER_CONFIG=$HOME/.docker
-
             gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-
       # -------------------------------
       # Build and Push Docker Image
       # -------------------------------
@@ -60,15 +45,56 @@ jobs:
           command: |
             docker build \
               -t us-central1-docker.pkg.dev/project-43fb5c97-55ce-44f7-b35/llmops-repo/llmops-app:${CIRCLE_SHA1} .
-
             docker push \
               us-central1-docker.pkg.dev/project-43fb5c97-55ce-44f7-b35/llmops-repo/llmops-app:${CIRCLE_SHA1}
+  
+  deploy_to_gke:
+    machine:
+      image: ubuntu-2204:current
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run:
+          name: Install Google Cloud SDK
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
+            curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
+              sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | \
+              sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+            sudo apt-get update
+            sudo apt-get install -y google-cloud-cli kubectl
+      - run:
+          name: Authenticate to Google Cloud (OIDC)
+          command: |
+            test -n "$CIRCLE_OIDC_TOKEN_V2"
+            echo "$CIRCLE_OIDC_TOKEN_V2" > /tmp/oidc-token
+            gcloud iam workload-identity-pools create-cred-config \
+              "projects/383274227926/locations/global/workloadIdentityPools/circleci-pool/providers/circleci-provider" \
+              --service-account="my-ci-sa@project-43fb5c97-55ce-44f7-b35.iam.gserviceaccount.com" \
+              --credential-source-file="/tmp/oidc-token" \
+              --output-file="/tmp/gcp-external.json"
+            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-external.json
+            gcloud auth login --cred-file=/tmp/gcp-external.json
+      - run:
+          name: Deploy to GKE
+          command: |
+            # Add your GKE deployment commands here
+            # Example:
+            # gcloud container clusters get-credentials YOUR-CLUSTER --region YOUR-REGION
+            # kubectl set image deployment/YOUR-DEPLOYMENT YOUR-CONTAINER=us-central1-docker.pkg.dev/project-43fb5c97-55ce-44f7-b35/llmops-repo/llmops-app:${CIRCLE_SHA1}
+            echo "Add your GKE deployment steps here"
 
 workflows:
   version: 2
   deploy_pipeline:
     jobs:
-      - build_and_push
+      - build_and_push:
+          context: 
+            - gcp-oidc  # Optional: if you store OIDC config in a context
       - deploy_to_gke:
           requires:
             - build_and_push
+          context:
+            - gcp-oidc
