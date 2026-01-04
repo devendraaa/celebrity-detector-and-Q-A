@@ -13,6 +13,14 @@ jobs:
       - checkout
 
       - run:
+          name: Install Google Cloud SDK + Docker Credential Helper
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y \
+              google-cloud-cli \
+              google-cloud-cli-docker-credential-gcr
+
+      - run:
           name: Authenticate to Google Cloud (OIDC)
           command: |
             # Write CircleCI OIDC token to file
@@ -25,14 +33,12 @@ jobs:
               --credential-source-file="/tmp/oidc-token" \
               --output-file="/tmp/gcp-external.json"
 
-            # Let ALL Google tools (including docker helper) use this identity
+            # Make credentials visible to gcloud + docker
             export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-external.json
             export DOCKER_CONFIG=$HOME/.docker
 
             # Configure Docker auth for Artifact Registry
             gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-            
-
 
       - run:
           name: Build and Push Docker Image
@@ -46,6 +52,12 @@ jobs:
     executor: gcp-machine
     steps:
       - checkout
+
+      - run:
+          name: Install Google Cloud SDK
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y google-cloud-cli
 
       - run:
           name: Authenticate to Google Cloud (OIDC)
