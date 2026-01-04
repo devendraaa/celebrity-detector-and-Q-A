@@ -27,9 +27,12 @@ jobs:
 
             # Let ALL Google tools (including docker helper) use this identity
             export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-external.json
+            export DOCKER_CONFIG=$HOME/.docker
 
             # Configure Docker auth for Artifact Registry
             gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+            
+
 
       - run:
           name: Build and Push Docker Image
