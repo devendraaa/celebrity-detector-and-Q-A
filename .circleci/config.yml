@@ -24,26 +24,50 @@ jobs:
       # Authenticate to GCP using OIDC and Build/Push
       # -------------------------------
       - run:
-          name: Authenticate to GCP (OIDC) and Push Docker Image
+          name: Debug and Authenticate to GCP (OIDC)
           command: |
             # Ensure OIDC token exists
-            test -n "$CIRCLE_OIDC_TOKEN_V2"
+            echo "Checking for OIDC token..."
+            test -n "$CIRCLE_OIDC_TOKEN_V2" && echo "OIDC token found" || echo "OIDC token missing!"
+            
+            # Save token and check it
             echo "$CIRCLE_OIDC_TOKEN_V2" > /tmp/oidc-token
+            echo "Token file created at /tmp/oidc-token"
             
             # Create workload identity credential config
+            echo "Creating credential config..."
             gcloud iam workload-identity-pools create-cred-config \
               "projects/383274227926/locations/global/workloadIdentityPools/circleci-pool/providers/circleci-provider" \
               --service-account="my-ci-sa@project-43fb5c97-55ce-44f7-b35.iam.gserviceaccount.com" \
               --credential-source-file="/tmp/oidc-token" \
               --output-file="/tmp/gcp-external.json"
             
-            # Set up authentication
+            # Set up authentication without login (try direct approach)
             export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-external.json
-            gcloud auth login --brief --cred-file=/tmp/gcp-external.json
             
-            # Get access token and authenticate Docker directly
-            ACCESS_TOKEN=$(gcloud auth print-access-token)
-            echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev
+            # Try to get access token directly without gcloud auth login
+            echo "Attempting to get access token..."
+            ACCESS_TOKEN=$(gcloud auth application-default print-access-token 2>&1)
+            
+            if [ $? -eq 0 ]; then
+              echo "Successfully obtained access token"
+              echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev
+            else
+              echo "Failed to get access token. Error: $ACCESS_TOKEN"
+              echo "Trying alternative method with gcloud auth print-identity-token..."
+              
+              # Alternative: use the credential file directly with Docker
+              gcloud auth activate-service-account --key-file=/tmp/gcp-external.json 2>&1 || true
+              ACCESS_TOKEN=$(gcloud auth print-access-token 2>&1)
+              
+              if [ $? -eq 0 ]; then
+                echo "Access token obtained via alternative method"
+                echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev
+              else
+                echo "All authentication methods failed"
+                exit 1
+              fi
+            fi
             
             # Build Docker image
             docker build \
